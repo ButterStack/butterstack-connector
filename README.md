@@ -6,17 +6,17 @@ single inbound port**.
 
 It opens exactly one outbound TLS connection to one hostname on 443, announces
 what it can do, and then executes only commands from a typed, versioned
-allowlist with constrained arguments — each one logged locally. It holds the
+allowlist with constrained arguments, each one logged locally. It holds the
 studio's tool credentials in its own config file and never sends them.
 
 This is the **spike** from issue #1575, checkbox groups 0 and 1: a standalone
 proof of the daemon and the protocol schema. Nothing here is deployed, and
 nothing here touches the Rails app.
 
-- [`PROTOCOL.md`](PROTOCOL.md) — the day-1 protocol schema (issue #1575 group 0)
-- [`internal/vocab/vocab.go`](internal/vocab/vocab.go) — the whole allowlist, in
+- [`PROTOCOL.md`](PROTOCOL.md) - the day-1 protocol schema (issue #1575 group 0)
+- [`internal/vocab/vocab.go`](internal/vocab/vocab.go) - the whole allowlist, in
   one readable file, on purpose
-- [`test/`](test/) — the mock broker and the seven drills
+- [`test/`](test/) - the mock broker and the seven drills
 
 Design sources, on branch `plan/teamcity-private-reach`:
 `ai/team/agents/devin/runbooks/2026-08-29-private-instance-reach-connector-design.md`
@@ -57,7 +57,7 @@ enforces rather than documents:
 
 Every credential comes from that file, or from a `*_file` path it names. There
 is no environment-variable fallback, no flag that takes a secret, and no remote
-configuration — the broker cannot tell the connector where to find a credential.
+configuration: the broker cannot tell the connector where to find a credential.
 
 ## What is in the vocabulary
 
@@ -72,7 +72,7 @@ configuration — the broker cannot tell the connector where to find a credentia
 | `p4.file_contents`, `ghes.commit.get`, `horde.server.info` | reserved, denied |
 
 No verb accepts a host, port, URL, or shell string. No verb accepts
-caller-supplied build parameters or properties — that is enforced structurally
+caller-supplied build parameters or properties, that is enforced structurally
 (`bannedArgNames` plus `Selfcheck()`, which runs at process start as well as in
 the tests), because a parameter map on a build-triggering verb interpolates into
 shell build steps and would make the allowlist a code-execution primitive inside
@@ -100,7 +100,7 @@ drill (f). Every drill passes today:
 
 The mock broker is not the broker. The real one is a dedicated Rack endpoint at
 `/connect` on the Rails app with hashed-token auth, Redis-routed command and
-result, and explicit tenant scoping — a later PR. What `test/mock_broker.rb`
+result, and explicit tenant scoping - a later PR. What `test/mock_broker.rb`
 models is the surface these drills need, and it does implement faithfully the
 four rules they exist to prove: refusal before session-state allocation,
 header-only tokens, SHA-256 digest storage with constant-time compare, and
@@ -117,9 +117,9 @@ standalone shape adds:
   frame boundary against a mock broker. They do not prove it against a real
   broker, a real TeamCity, or a real p4d.
 - **Anything on the Rails side.** There is no `/connect` endpoint in this PR, no
-  ActionCable change, no migration, no UI. The tenant-context drill — "assert
+  ActionCable change, no migration, no UI. The tenant-context drill - "assert
   tenant context is nil at the start of a request that follows a connector frame
-  on the same Puma thread" — is Rails-side and is **not** covered here. Only the
+  on the same Puma thread" - is Rails-side and is **not** covered here. Only the
   broker-side half of drill (f) is.
 - **Anything on real infrastructure.** Nothing ran against staging, demo, or
   production. No terraform, no security group, no hostname, no certificate.
@@ -127,7 +127,7 @@ standalone shape adds:
   the #1574 Phase -1 app fixes landing first; the "no token in
   `webhook_events.payload` or the app log" drill therefore has no result yet.
 - **The frame codec against an independent production stack.** Both ends here
-  were written from RFC 6455 — the Go client and the Ruby server independently,
+  were written from RFC 6455 - the Go client and the Ruby server independently,
   which is why a masking or handshake mistake shows up as a failed drill. But
   neither has met a real ALB, a real nginx `Upgrade` hop, or a real proxy.
 - **Latency over a home connection.** The drills run on loopback. The design's
@@ -149,3 +149,106 @@ standalone shape adds:
 
 This is the go/no-go input for the build, and it is deliberately smaller than
 the product.
+
+---
+
+## UAT
+
+`tests/uat/connector.spec.js` (repo root) is a second, Docker-based test of
+this same daemon: TeamCity Tier 1 webhook intake into the real Rails app, and
+the compiled verbs, denials, and degradation drills against a containerized
+version of this connector, run inside a Docker-modelled "studio LAN" that is
+NOT reachable from the cloud side (outbound allowed, inbound blocked), which
+is the shape issue #1574/#1575 actually sell.
+
+```bash
+docker-compose --profile core --profile connector up -d --build connector
+npm run test:uat:connector
+npm run test:uat:connector:keep-data   # leaves the signup/project for inspection
+```
+
+**Always scope `--build` to `connector`.** `web`/`sidekiq` still carry a
+`build:` key in the base `docker-compose.yml` even though
+`docker-compose.uat-connector.yml` pins them to the prebuilt
+`image: butter_stack-web:latest`; an unscoped `--build` rebuilds *and retags*
+that shared image, which every worktree's dev stack uses.
+
+### Topology
+
+```
+   "cloud" side (network: default)          "studio LAN" (network: studio_lan,
+                                              internal: true -- no route out)
+   +-----------+     +--------------+                +----------------+
+   |    web    |     | mock-broker  |<===wss:9443====>|   connector    |
+   | (Rails)   |     | (drill stand-|                 | (the daemon    |
+   +-----+-----+     |  in for the  |                 |  under test)   |
+         ^           |  real /connect|                +--------+-------+
+         |           |  endpoint)   |                          |
+         | http :3000|              |                          | (LAN-local)
+   +-----+---------+ +--------------+                          |
+   | studio-egress |<===================studio_lan==============+
+   | (socat, models|                          ^
+   |  outbound-only|                 +--------+---------+
+   |  firewall)    |                 |   teamcity-stub   |
+   +---------------+                 | (fake on-prem CI, |
+                                     |  no published port)|
+                                     +--------------------+
+```
+
+`internal: true` on `studio_lan` is the whole isolation guarantee. `web`
+cannot resolve or reach `teamcity-stub`; `connector` publishes no port at all
+(`docker inspect` shows an empty port map, and `netstat -tln` inside it lists
+nothing but Docker's own embedded DNS resolver); `teamcity-stub`'s only way to
+reach Rails is the one TCP port `studio-egress` forwards, which is the studio
+firewall's "outbound allowed" in miniature. `connector.spec.js` phase 100
+asserts this shape directly before doing anything else.
+
+### What this proves
+
+- The TeamCity Tier 1 webhook path both ways Teddy's design note describes:
+  the curl-step flat payload (`X-Webhook-Token`) creates a `BuildRun` with
+  `ci_provider == 'teamcity'`; TeamCity's own built-in webhook envelope
+  (`php-auth-user`/`php-auth-pw`) authenticates and records a `WebhookEvent`
+  but does **not** yet create a `BuildRun` - there is no adapter for the
+  `{eventType, payload}` shape in `jenkins_controller.rb` (issue #1574 Phase
+  1, `normalize_ci_payload`). The spec documents this as the real current
+  behavior; the assertion is written to flip the day that adapter lands.
+- Neither webhook token nor its HTTP headers ever land in a persisted
+  `WebhookEvent`.
+- The connector's compiled vocabulary, denials (unknown verb, out-of-scope
+  path, reserved-but-not-compiled verb, wrong argument type, a disabled
+  content toggle, an unknown argument), and the no-shell proof on the p4 argv
+  log, all against a real containerized daemon rather than the in-process
+  drill harness.
+- Broker-side refusals (query-string token, missing bearer token) before any
+  session state exists, cross-session result discard, and the degradation
+  drills (connector stop/start, token revoke/re-register) - the same four
+  rules `test/drills.rb` proves, exercised over the network instead of a
+  Ruby method call.
+
+### What this UAT suite does NOT prove
+
+Everything `test/README.md`'s own "what this spike does not prove" section
+already says, plus:
+
+- **There is still no real `/connect` Rack endpoint.** `mock-broker` here is
+  the same drill stand-in as `test/mock_broker.rb`, containerized
+  (`test/mock_broker_server.rb`) with a small HTTP admin API bolted on so the
+  Playwright test can drive sessions/refusals/revoke/partition without
+  speaking the wire protocol itself. It is not, and does not claim to be, the
+  real broker.
+- **No real TeamCity.** `teamcity-stub` (`test/support/teamcity_stub.rb`) is a
+  hand-rolled fake that answers exactly the REST calls the connector makes and
+  can fire the two outbound webhook shapes a real TeamCity delivers. It has
+  never seen a real TeamCity server's actual quirks.
+- **No real p4d.** `test/support/fake_p4` stands in for the `p4` CLI, same as
+  in the drills.
+- **Idle-connector liveness** is a WS-layer ping/pong rule: the heartbeat
+  goroutine sends a WebSocket ping alongside the application-level heartbeat
+  frame, and the read loop's deadline only means "reconnect" when no inbound
+  frame of any kind (a pong included) arrived within heartbeat x readSlack,
+  so a quiet-but-healthy broker no longer cycles the session offline at rest.
+- Everything else `test/README.md` already lists: real infrastructure, a
+  production-hardened image (no Sigstore signing, no SBOM, no digest-pinned
+  base - see `connector/Dockerfile`'s header comment), scale, and any verb
+  beyond the five compiled ones.

@@ -103,7 +103,11 @@ class MockBroker
 
   attr_reader :port, :refusals, :received_frames, :discarded_results
 
-  def initialize(host: 'localhost', tls_dir:, logger: nil)
+  # bind/port let a container-hosted broker (mock_broker_server.rb) listen on
+  # a fixed, published address instead of loopback + an ephemeral port. The
+  # defaults are unchanged so drills.rb, which relies on '127.0.0.1'/`nil`
+  # port picking a free one, needs no changes at all.
+  def initialize(host: 'localhost', tls_dir:, logger: nil, bind: '127.0.0.1', port: nil)
     @host = host
     @tls = MockTLS.generate(tls_dir, host)
     @logger = logger
@@ -114,7 +118,8 @@ class MockBroker
     @received_frames = []   # raw inbound frame text, for the egress assertions
     @discarded_results = [] # cross-session result frames
     @partition_until = nil
-    @port = nil
+    @bind = bind
+    @port = port
     @running = false
   end
 
@@ -147,7 +152,7 @@ class MockBroker
   end
 
   def start
-    @server = TCPServer.new('127.0.0.1', @port || 0)
+    @server = TCPServer.new(@bind, @port || 0)
     @port = @server.addr[1]
     ctx = OpenSSL::SSL::SSLContext.new
     ctx.cert = @tls.server_cert

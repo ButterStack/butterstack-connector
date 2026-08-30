@@ -9,11 +9,21 @@
 # must arrive as exactly one argv element with its bytes unchanged, which is
 # only true if the connector execve's an argv array instead of building a
 # command line.
+#
+# The connector's Perforce executor (internal/tools/perforce.go #env) builds a
+# deliberately minimal child environment -- PATH, HOME, P4PORT, P4USER,
+# P4PASSWD only -- and does not forward arbitrary variables, so a caller can't
+# rely on FAKE_P4_ARGV_LOG surviving into the child process unless something
+# else arranges it. drills.rb arranges it itself, with a tiny wrapper script
+# that bakes the path in before exec'ing this file (see drills.rb's
+# P4_WRAPPER). The UAT container (docker-compose.uat-connector.yml) has no
+# such wrapper -- connector.yml points straight at this file -- so the
+# fallback below is what makes the UAT no-shell drill (connector.spec.js
+# phase 510) work: same default path as the connector's own log_dir.
 require 'json'
 
-if (log = ENV['FAKE_P4_ARGV_LOG'])
-  File.open(log, 'a') { |f| f.puts(JSON.generate(ARGV)) }
-end
+log = ENV['FAKE_P4_ARGV_LOG'] || '/var/log/connector/p4-argv.jsonl'
+File.open(log, 'a') { |f| f.puts(JSON.generate(ARGV)) }
 
 # Strip the fixed connection flags the connector always passes.
 args = ARGV.dup
