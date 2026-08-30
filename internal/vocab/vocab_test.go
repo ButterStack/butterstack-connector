@@ -179,6 +179,56 @@ func TestInScopePathIsAllowed(t *testing.T) {
 	}
 }
 
+// TestDepotScopeRespectsSegmentBoundary is the regression guard for the
+// bare-strings.HasPrefix bug: a scope of "//depot/game/" must not admit
+// "//depot/gamesecret/...", because "gamesecret" also starts with the
+// literal string "game". Only a real path-segment boundary (the scope root
+// itself, or the scope as a genuine "prefix/" match) counts as in-scope.
+func TestDepotScopeRespectsSegmentBoundary(t *testing.T) {
+	cases := []struct {
+		path    string
+		allowed bool
+	}{
+		{`//depot/gamesecret/...`, false}, // segment-boundary bypass: denied
+		{`//depot/game/...`, true},        // genuine child of the scope: allowed
+		{`//depot/game`, true},            // the scope root itself, exact: allowed
+	}
+	for _, c := range cases {
+		_, _, derr := resolve(t, "p4.changes", `{"path":"`+c.path+`"}`)
+		if c.allowed && derr != nil {
+			t.Errorf("%s: want allowed, got deny %v", c.path, derr)
+		}
+		if !c.allowed && (derr == nil || derr.Reason != ReasonOutOfScopePath) {
+			t.Errorf("%s: want %s, got %v", c.path, ReasonOutOfScopePath, derr)
+		}
+	}
+}
+
+// TestWithinPrefixList unit-tests the matcher directly: a scope entry without
+// a trailing slash is skipped rather than matched with a bare prefix check.
+func TestWithinPrefixList(t *testing.T) {
+	scopes := []string{"//depot/game/"}
+	cases := map[string]bool{
+		"//depot/gamesecret/...": false,
+		"//depot/game/...":       true,
+		"//depot/game":           true,
+		"//depot/gam":            false,
+	}
+	for path, want := range cases {
+		if got := withinPrefixList(literalPrefix(path), scopes); got != want {
+			t.Errorf("withinPrefixList(%q) = %v, want %v", path, got, want)
+		}
+	}
+
+	// An un-normalized scope entry (no trailing slash) is skipped entirely:
+	// config.Validate is what normalizes entries, and this function must not
+	// silently fall back to the unsafe bare-prefix match if it somehow sees
+	// one that wasn't.
+	if withinPrefixList("//depot/game", []string{"//depot/game"}) {
+		t.Fatalf("an un-normalized scope entry (no trailing slash) must not match")
+	}
+}
+
 // TestContentToggleCannotBeTurnedOnByACaller pins include_diff to false at the
 // schema level, so no broker frame and no config value can flip it in v0.
 func TestContentToggleCannotBeTurnedOnByACaller(t *testing.T) {

@@ -32,6 +32,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -93,6 +94,26 @@ type Conn struct {
 	writeMu sync.Mutex
 	closed  bool
 	closeMu sync.Mutex
+
+	// lastActivity is the unix-nanos timestamp of the most recently received
+	// frame of any kind, pong included. It is written from the single
+	// goroutine that calls ReadMessage and read from any goroutine (the
+	// session's idle-reconnect check), hence atomic rather than a plain field.
+	lastActivity atomic.Int64
+}
+
+// LastActivity returns the time of the most recently received frame of any
+// kind, including a pong answering our own ping. The protocol has no
+// broker-to-connector traffic while idle apart from that pong, so this is
+// what lets a read-deadline timeout distinguish "quiet but alive" from
+// "actually dead" instead of treating every idle period as a dead socket.
+// Zero until the first frame arrives.
+func (c *Conn) LastActivity() time.Time {
+	ns := c.lastActivity.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns)
 }
 
 // Dial performs the TLS and WebSocket handshakes.
@@ -203,7 +224,18 @@ func Dial(opts Options) (*Conn, error) {
 	}
 
 	_ = raw.SetDeadline(time.Time{})
-	return &Conn{raw: raw, br: br}, nil
+	c := &Conn{raw: raw, br: br}
+	c.lastActivity.Store(time.Now().UnixNano())
+	return c, nil
+}
+
+// IsTimeout reports whether err is a read/write deadline expiring, as opposed
+// to a genuine transport failure (connection reset, EOF, protocol error).
+// The session's idle-reconnect check uses this to decide whether a
+// ReadMessage deadline is cause to reconnect or just an idle broker.
+func IsTimeout(err error) bool {
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }
 
 // AcceptKey computes the RFC 6455 Sec-WebSocket-Accept value. Exported so the
@@ -292,13 +324,14 @@ func (c *Conn) ReadMessage(deadline time.Time) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+		c.lastActivity.Store(time.Now().UnixNano())
 		switch opcode {
 		case opPing:
 			if err := c.writeFrame(opPong, payload); err != nil {
 				return nil, err
 			}
 		case opPong:
-			// liveness only
+			// liveness only; never surfaced as a message to the caller.
 		case opClose:
 			_ = c.writeFrame(opClose, payload)
 			return nil, ErrClosedByServer

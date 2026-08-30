@@ -252,12 +252,19 @@ func (c *Config) Validate() error {
 			return errors.New("config: perforce.enabled needs at least one " +
 				"scopes.depot_scope entry; an unscoped depot verb is denied anyway")
 		}
-		for _, p := range c.Scopes.DepotScope {
+		for i, p := range c.Scopes.DepotScope {
 			if !strings.HasPrefix(p, "//") {
 				return fmt.Errorf("config: depot_scope %q must begin //", p)
 			}
 			if strings.ContainsAny(p, "*") || strings.Contains(p, "...") {
 				return fmt.Errorf("config: depot_scope %q must be a literal prefix, not a wildcard", p)
+			}
+			// Normalize to a trailing slash so vocab.withinPrefixList can match on
+			// a real path-segment boundary: without this, a scope of "//depot/game"
+			// (no trailing slash) would admit "//depot/gamesecret/..." via a bare
+			// strings.HasPrefix, because "gamesecret" also starts with "game".
+			if !strings.HasSuffix(p, "/") {
+				c.Scopes.DepotScope[i] = p + "/"
 			}
 		}
 	}

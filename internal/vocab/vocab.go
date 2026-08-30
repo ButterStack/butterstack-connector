@@ -547,12 +547,21 @@ func literalPrefix(s string) string {
 	return s
 }
 
+// withinPrefixList reports whether s falls inside one of the configured depot
+// scopes, matching only on a real path-segment boundary. A scope entry is
+// expected to end with "/" (config.Validate normalizes every configured
+// entry this way); an entry without a trailing slash is skipped rather than
+// matched with a bare strings.HasPrefix, because that would let a scope of
+// "//depot/game" wrongly admit "//depot/gamesecret/...": "gamesecret" also
+// starts with the literal string "game". With the trailing slash required, s
+// matches only when it is exactly the scope without its trailing slash (the
+// scope root itself) or has the full "prefix/" as a genuine path prefix.
 func withinPrefixList(s string, prefixes []string) bool {
 	for _, p := range prefixes {
-		if p == "" {
+		if !strings.HasSuffix(p, "/") {
 			continue
 		}
-		if strings.HasPrefix(s, p) {
+		if s == strings.TrimSuffix(p, "/") || strings.HasPrefix(s, p) {
 			return true
 		}
 	}

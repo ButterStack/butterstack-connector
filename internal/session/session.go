@@ -45,6 +45,13 @@ const (
 
 	maxDeadline     = 60 * time.Second
 	defaultDeadline = 15 * time.Second
+
+	// reasonToolError is the stable machine token sent to the broker when a
+	// tool call fails. The real error text (p4 stderr with a server
+	// host:port, a Go *url.Error with the TeamCity URL, etc.) carries LAN
+	// detail and never leaves the studio: it is written to the local audit
+	// log's Detail field only, never into the result frame's `reason`.
+	reasonToolError = "tool_error"
 )
 
 // Runner owns one connector process's connection lifecycle.
@@ -240,6 +247,15 @@ func (r *Runner) pump(ctx context.Context, conn *wsclient.Conn, heartbeat time.D
 					fail(err)
 					return
 				}
+				// A WS-layer ping too, independent of the application-level
+				// heartbeat frame above: the broker answers a ping with a pong
+				// automatically at the transport layer even if it never sends
+				// its own traffic, which is what gives the read loop something
+				// to see besides "nothing" during a quiet, healthy session.
+				if err := conn.WritePing(); err != nil {
+					fail(err)
+					return
+				}
 			}
 		}
 	}()
@@ -248,10 +264,21 @@ func (r *Runner) pump(ctx context.Context, conn *wsclient.Conn, heartbeat time.D
 	go func() {
 		defer wg.Done()
 		for {
-			// If the broker goes quiet for longer than a couple of heartbeat
-			// intervals the socket is dead even if TCP has not noticed.
+			// The protocol has no broker-to-connector traffic while idle: the
+			// broker only ever answers a command. Without a liveness signal,
+			// this deadline alone would fire against a perfectly healthy,
+			// quiet broker every ~heartbeat*readSlack, which is why the
+			// heartbeat goroutine also sends a WS-layer ping: the broker's
+			// automatic pong is the "something happened" this check needs. A
+			// deadline-exceeded error is therefore reconnect-worthy only when
+			// NO inbound frame of any kind (pong included, via
+			// conn.LastActivity) arrived within that same window; otherwise
+			// it is just an idle, alive socket and the loop keeps waiting.
 			raw, err := conn.ReadMessage(time.Now().Add(heartbeat * readSlack))
 			if err != nil {
+				if wsclient.IsTimeout(err) && time.Since(conn.LastActivity()) < heartbeat*readSlack {
+					continue
+				}
 				fail(err)
 				return
 			}
@@ -365,7 +392,11 @@ func (r *Runner) handle(ctx context.Context, cmd protocol.Command) protocol.Resu
 			Status: protocol.StatusTimeout, Reason: vocab.ReasonDeadlineExceeded}
 		return finish(res, "")
 	case err != nil:
-		return finish(protocol.Errorf(cmd.ID, "%s", err.Error()), "")
+		// The broker gets only the stable reason token; the actual error text
+		// (which can carry LAN detail: p4 stderr with a server host:port, a Go
+		// *url.Error with the TeamCity URL) is passed to finish's `detail`
+		// argument, which lands in the local audit log only.
+		return finish(protocol.Errorf(cmd.ID, "%s", reasonToolError), err.Error())
 	}
 	return finish(protocol.OK(cmd.ID, body, n, truncated), "")
 }

@@ -49,7 +49,7 @@ schema, because the tempting shortcut is real:
 - `config/environments/production.rb:56` restricts `allowed_request_origins` to
   the two `RAILS_HOST` origins. A non-browser client sends no `Origin`, so
   admitting one through ActionCable would mean widening that list or disabling
-  forgery protection — either of which weakens a live cross-site
+  forgery protection, either of which weakens a live cross-site
   WebSocket-hijacking control that protects real users' browser sockets.
 - That connection carries `identified_by :current_user, :current_account`,
   `impersonates :user`, and sets `ActsAsTenant.current_tenant`. A machine client
@@ -125,7 +125,7 @@ revoked token. An unknown verb must likewise never reveal what is configured
 generic `req/ip` 300-per-5-minutes at
 `config/initializers/rack_attack.rb:112-115`. That generic budget is shared with
 a studio's webhook traffic arriving from the same NAT address, and rack-attack
-sees only the upgrade, never the frames — so per-session command budgets and the
+sees only the upgrade, never the frames, so per-session command budgets and the
 per-integration connection cap (v0: 2) belong in the broker, not in rack-attack.
 
 ---
@@ -148,8 +148,16 @@ binary frame type and no streaming.
 
 // result -- answers exactly one command, keyed by its id.
 { "type": "result", "id": "<uuid>", "status": "ok|error|denied|timeout",
-  "reason": "<stable token, denials only>", "body": {}, "truncated": false, "bytes": 1234 }
+  "reason": "<stable token>", "body": {}, "truncated": false, "bytes": 1234 }
 ```
+
+`reason` is always a stable machine token, on every status that carries one,
+never free text. For `status: "error"` (a tool call that reached the tool and
+failed), `reason` is the fixed token `tool_error`: the real error text -- p4
+stderr with a server host:port, a Go `*url.Error` with the TeamCity URL, any
+of it -- carries detail about the studio's LAN and never leaves it. That text
+is written only to the connector's local audit log (see §7); the broker never
+receives it.
 
 ### Broker → connector
 
@@ -239,7 +247,7 @@ Both are drilled separately for that reason (Shuri §6 item 7b).
 This is the finding that made this layer day-1 work rather than v1 polish
 (Shuri F4). `allowed_jobs` constrains *which* job runs; a `params` map is
 unconstrained, and Jenkins build parameters and TeamCity properties are
-interpolated into shell build steps by design — including in our own
+interpolated into shell build steps by design, including in our own
 `Jenkinsfile.unreal` and `Jenkinsfile.minimobile` templates. A caller-supplied
 parameter bag would therefore turn the typed allowlist into a code-execution
 primitive on the studio's build agents, and falsify the single sentence the
@@ -255,12 +263,12 @@ So:
   composes a **fixed** request body, `{"buildType":{"id":"<id>"}}`. No
   `properties`, no `branchName`, no `comment`.
 - Neither verb is compiled into v0 at all.
-- A v1 may add per-job `allowed_params` in `connector.yml` — an allowlist of
+- A v1 may add per-job `allowed_params` in `connector.yml` - an allowlist of
   parameter *names*, each with a value pattern or enum, enforced connector-side
   before the call.
 
 This is enforced structurally, not by convention: `bannedArgNames` in
-`vocab.go` lists the argument names no verb may declare — compiled or reserved —
+`vocab.go` lists the argument names no verb may declare - compiled or reserved -
 each with the reason it is banned, and `Selfcheck()` runs both in the test suite
 and at process start. A build whose vocabulary grew one of them refuses to run.
 
@@ -308,7 +316,7 @@ Every credential the connector uses comes from `connector.yml`, or from a
 
 - no environment-variable fallback for any credential;
 - no command-line flag that takes a secret;
-- no remote configuration — the broker cannot tell the connector where to find a
+- no remote configuration - the broker cannot tell the connector where to find a
   credential.
 
 If the broker could, "your credentials never leave your network" would depend on
@@ -351,6 +359,10 @@ Arguments are hashed rather than recorded verbatim, so the log correlates with
 our side ("we sent command X, they ran command X") without becoming a second
 copy of whatever the arguments contained. Denial detail strings stay local and
 never travel in a `result` frame: a denial message that echoed the rejected
-value back would be a small egress channel of its own.
+value back would be a small egress channel of its own. The same rule applies
+to a failed tool call: the `result` frame's `reason` is the stable token
+`tool_error` only, and the real error text -- which can carry LAN detail like
+a p4 server host:port or a TeamCity URL -- is written to the local audit
+line's `detail` field and never leaves the studio.
 
 The log is the studio's evidence, not ours. No verb can read it.

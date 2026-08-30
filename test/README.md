@@ -32,7 +32,7 @@ Requires Ruby 3.2+ (stdlib only) and a built connector binary. Takes about
 
 It is not the broker. The real one is a dedicated Rack endpoint at `/connect` on
 the Rails app with hashed-token auth, a Redis-routed command and result path,
-and explicit tenant scoping — none of which exists yet and none of which this
+and explicit tenant scoping - none of which exists yet and none of which this
 models. It does implement faithfully the four rules the drills exist to prove:
 
 1. the upgrade is refused **before any per-connection state is allocated** when
@@ -40,6 +40,6 @@ models. It does implement faithfully the four rules the drills exist to prove:
 2. a query-string token is refused, and no code path here reads a token from a
    query string;
 3. tokens are stored as the SHA-256 digest of the secret segment and compared in
-   constant time — the plaintext is never held;
+   constant time - the plaintext is never held;
 4. a `result` frame is matched against the issuing session's own outstanding
    commands; one carrying another session's command id is discarded.

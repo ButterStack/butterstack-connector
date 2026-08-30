@@ -1,8 +1,11 @@
 package wsclient
 
 import (
+	"bufio"
 	"errors"
+	"net"
 	"testing"
+	"time"
 )
 
 // TestAcceptKey pins base64(sha1(key + RFC 6455 GUID)) for the RFC's sample
@@ -32,5 +35,48 @@ func TestDialRefusesPlaintextSchemes(t *testing.T) {
 		if _, err := Dial(Options{Endpoint: ep}); err == nil {
 			t.Errorf("%s was accepted", ep)
 		}
+	}
+}
+
+// TestPongUpdatesLastActivity is the regression guard for the idle-reconnect
+// fix: a pong is "silent" (ReadMessage never returns it as a message, per the
+// opPong case in the read loop), but it must still count as activity, or the
+// session's idle check would treat every quiet-but-alive period as dead. Built
+// directly against a Conn over a net.Pipe rather than through Dial, since Dial
+// requires a full HTTP upgrade handshake this test has no need for.
+func TestPongUpdatesLastActivity(t *testing.T) {
+	serverSide, clientSide := net.Pipe()
+	defer serverSide.Close()
+	defer clientSide.Close()
+
+	c := &Conn{raw: clientSide, br: bufio.NewReader(clientSide)}
+	if !c.LastActivity().IsZero() {
+		t.Fatalf("LastActivity should be zero before any frame arrives")
+	}
+
+	// A minimal, unmasked pong frame (servers must not mask, per RFC 6455):
+	// FIN+opcode byte 0x8A, then a zero-length payload byte 0x00.
+	go func() {
+		_, _ = serverSide.Write([]byte{0x8A, 0x00})
+	}()
+
+	before := time.Now()
+	// The pong never completes a message, so ReadMessage blocks until its
+	// deadline; that timeout is expected here; what matters is LastActivity
+	// having moved in the meantime.
+	_, err := c.ReadMessage(time.Now().Add(200 * time.Millisecond))
+	if err == nil {
+		t.Fatalf("expected a deadline timeout (only a pong was sent, no message)")
+	}
+	if !IsTimeout(err) {
+		t.Fatalf("expected a timeout error, got %v", err)
+	}
+
+	got := c.LastActivity()
+	if got.IsZero() {
+		t.Fatalf("LastActivity was not updated by the pong")
+	}
+	if got.Before(before) {
+		t.Fatalf("LastActivity = %v, should be at or after %v", got, before)
 	}
 }

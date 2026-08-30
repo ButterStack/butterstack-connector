@@ -148,6 +148,36 @@ func TestPerforceNeedsADepotScope(t *testing.T) {
 	}
 }
 
+// TestDepotScopeIsNormalizedWithTrailingSlash guards the segment-boundary
+// fix: vocab.withinPrefixList only matches a scope entry that ends with "/",
+// so an entry configured without one (e.g. "//depot/game") must be
+// normalized here at load time, or every depot verb against that scope
+// would silently deny everything.
+func TestDepotScopeIsNormalizedWithTrailingSlash(t *testing.T) {
+	p := writeCfg(t, base(`scopes:
+  depot_scope:
+    - //depot/game
+    - //depot/other/
+perforce:
+  enabled: true
+  port: ssl:p4.lan:1666
+  user: butterstack-ro
+`), 0o600)
+	c, err := Load(p)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	want := []string{"//depot/game/", "//depot/other/"}
+	if len(c.Scopes.DepotScope) != len(want) {
+		t.Fatalf("depot_scope = %v, want %v", c.Scopes.DepotScope, want)
+	}
+	for i, w := range want {
+		if c.Scopes.DepotScope[i] != w {
+			t.Errorf("depot_scope[%d] = %q, want %q", i, c.Scopes.DepotScope[i], w)
+		}
+	}
+}
+
 func TestWildcardDepotScopeIsRefused(t *testing.T) {
 	p := writeCfg(t, base(`scopes:
   depot_scope:
