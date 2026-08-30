@@ -71,6 +71,24 @@ warn("[mock-broker] CA published at #{CA_PEM_PATH}")
 # Admin HTTP API -- plain HTTP, hand-rolled in the style of teamcity_stub.rb.
 # No gems: this is a drill/UAT fixture, not a shipped service.
 # ---------------------------------------------------------------------------
+
+# One-line description per admin route, served back from GET / and GET
+# /routes so a human hitting the admin port in a browser gets an index
+# instead of a bare 404 "no such admin route" error.
+ADMIN_ROUTES = {
+  'GET /' => 'This index',
+  'GET /routes' => 'This index (alias)',
+  'GET /health' => 'Liveness check',
+  'GET /ca.pem' => 'Fetch the throwaway TLS CA cert connector containers trust',
+  'GET /status' => 'Current connector sessions, refusals, and discarded results',
+  'POST /call' => 'Issue a synchronous call to the connected connector session',
+  'POST /degraded_call' => 'Issue a call via the degraded/slow-path code path',
+  'POST /issue_unregistered' => 'Issue a call outside the normal tracked-call table',
+  'POST /revoke' => 'Revoke the registered connector token, closing its session',
+  'POST /register' => 'Re-register the connector token after a revoke',
+  'POST /partition' => 'Simulate a network partition for N seconds'
+}.freeze
+
 def respond_json(sock, status, body)
   json = JSON.generate(body)
   text = { 200 => 'OK', 400 => 'Bad Request', 404 => 'Not Found', 502 => 'Bad Gateway' }.fetch(status, 'Error')
@@ -117,6 +135,15 @@ def handle_admin(sock)
   params = body.empty? ? {} : JSON.parse(body)
 
   case [method, path]
+  when ['GET', '/'], ['GET', '/routes']
+    respond_json(sock, 200, {
+                   'service' => 'mock-broker',
+                   'description' => 'Drill stand-in for the future Rails /connect broker -- not the real broker. ' \
+                                     'See connector/test/README.md "What the mock broker is not".',
+                   'wss_url' => "wss://#{HOST}:#{PORT}",
+                   'admin_routes' => ADMIN_ROUTES
+                 })
+
   when ['GET', '/health']
     respond_json(sock, 200, { 'ok' => true })
 
