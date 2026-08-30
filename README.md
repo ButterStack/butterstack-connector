@@ -208,11 +208,23 @@ asserts this shape directly before doing anything else.
 - The TeamCity Tier 1 webhook path both ways Teddy's design note describes:
   the curl-step flat payload (`X-Webhook-Token`) creates a `BuildRun` with
   `ci_provider == 'teamcity'`; TeamCity's own built-in webhook envelope
-  (`php-auth-user`/`php-auth-pw`) authenticates and records a `WebhookEvent`
-  but does **not** yet create a `BuildRun` - there is no adapter for the
-  `{eventType, payload}` shape in `jenkins_controller.rb` (issue #1574 Phase
-  1, `normalize_ci_payload`). The spec documents this as the real current
-  behavior; the assertion is written to flip the day that adapter lands.
+  authenticates and records a `WebhookEvent` but does **not** yet create a
+  `BuildRun` - there is no adapter for the `{eventType, payload}` shape in
+  `jenkins_controller.rb` (issue #1574 Phase 1, `normalize_ci_payload`). The
+  spec documents this as the real current behavior; the assertion is written
+  to flip the day that adapter lands.
+- A real TeamCity 2026.1.3 server (captured on Ryan's LAN with a request
+  logger) authenticates its built-in webhook with a standard `Authorization:
+  Basic base64(username:password)` header built from
+  `teamcity.internal.webhooks.username`/`.password`, and only when
+  `.password` is declared as a plain-typed parameter - a Password-typed
+  `.password` sends no `Authorization` header at all, not
+  `php-auth-user`/`php-auth-pw`. `teamcity-stub`'s `mode: 'native'` mirrors
+  this: it sends Basic auth by default (phase 410) and the real server's
+  `User-Agent` string, and falls back to the non-standard
+  `php-auth-user`/`php-auth-pw` pair only when the caller passes `auth:
+  'php-auth'` (phase 415) - kept as the secondary credential channel
+  `WebhookTokenSources` still accepts (#935).
 - Neither webhook token nor its HTTP headers ever land in a persisted
   `WebhookEvent`.
 - The connector's compiled vocabulary, denials (unknown verb, out-of-scope

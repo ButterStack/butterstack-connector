@@ -161,11 +161,23 @@ class TeamCityStub
 
   # handle_uat_fire_webhook is the UAT stand-in for what a real TeamCity
   # delivers on "Build finished": either its own built-in webhook envelope
-  # (teamcity.internal.webhooks.*, mode "native") with the credential in the
-  # non-standard php-auth-user/php-auth-pw headers (TeamCity's built-in webhook
-  # feature cannot set a custom header and cannot sign), or the flat payload a
-  # curl build step composes (mode "curl_step") with the credential in
+  # (teamcity.internal.webhooks.*, mode "native") or the flat payload a curl
+  # build step composes (mode "curl_step") with the credential in
   # X-Webhook-Token, matching the recipe in the #1574 Tier 1 wiring doc.
+  #
+  # A real TeamCity 2026.1.3 server (captured on Ryan's LAN with a request
+  # logger; see test/fixtures/files/teamcity/delivery_headers.json) sends its
+  # built-in webhook with a standard `Authorization: Basic
+  # base64(username:password)` header built from
+  # teamcity.internal.webhooks.username/.password when `.password` is a
+  # plain-typed parameter -- never php-auth-user/php-auth-pw. With a
+  # Password-typed `.password`, no Authorization header is sent at all. Mode
+  # "native" therefore defaults to Basic auth (the real channel) and only
+  # falls back to the non-standard php-auth-user/php-auth-pw pair when
+  # `auth: "php-auth"` is passed explicitly -- kept because
+  # WebhookTokenSources still accepts it as a secondary credential channel
+  # (#935). Passing neither username nor password models the Password-typed
+  # case: no Authorization header at all.
   #
   # This request is OUTBOUND from the studio's TeamCity to ButterStack's
   # webhook intake -- exactly the direction studio_lan permits.
@@ -187,13 +199,23 @@ class TeamCityStub
 
     case mode
     when 'native'
+      # Real TeamCity identifies itself with this exact User-Agent on every
+      # request, regardless of auth channel.
+      req['User-Agent'] = 'TeamCity Server 2026.1.3 (build 222742)'
+
       # Credentials are optional on purpose: omitting username/password lets
       # the connector.spec.js "missing credential" drill (phase 420) fire a
       # request with no Authorization channel at all, distinct from a
       # present-but-wrong one.
-      req['php-auth-user'] = params['username'] if params['username']
-      req['php-auth-pw'] = params['password'] if params['password']
-      req.body = JSON.generate({ 'eventType' => 'BUILD_FINISHED', 'payload' => build })
+      if params['auth'] == 'php-auth'
+        req['php-auth-user'] = params['username'] if params['username']
+        req['php-auth-pw'] = params['password'] if params['password']
+      elsif params['username'] || params['password']
+        creds = "#{params['username']}:#{params['password']}"
+        req['Authorization'] = "Basic #{[creds].pack('m0')}"
+      end
+
+      req.body = JSON.generate({ 'eventType' => 'BUILD_FINISHED', 'payload' => native_payload_for(build) })
     when 'curl_step'
       req['X-Webhook-Token'] = params['token'] if params['token']
       flat = {
@@ -216,6 +238,66 @@ class TeamCityStub
     respond(sock, 200, { 'upstream_status' => response.code.to_i, 'upstream_body' => response.body.to_s })
   rescue StandardError => e
     respond(sock, 502, { 'error' => "#{e.class}: #{e.message}" })
+  end
+
+  # native_payload_for builds the "native" envelope's payload in the shape of
+  # a real TeamCity REST Build resource -- the same keys captured in
+  # test/fixtures/files/teamcity/build_finished_success.json (id,
+  # buildTypeId, number, status, state, href, webUrl, statusText,
+  # buildType{id,name,projectName,projectId,href,webUrl}, queuedDate/
+  # startDate/finishDate, triggered, changes, revisions, agent, artifacts,
+  # properties) -- rather than the reconstructed minimal object this stub
+  # used to hand back. It's inlined here (not read from that fixture at
+  # runtime) because the teamcity-stub container only mounts connector/test,
+  # not the repo-root test/fixtures tree.
+  #
+  # The seeded build's own id/buildTypeId/number/status/state/revision are
+  # threaded through verbatim, including `revisions`, so the curl_step and
+  # native paths carry the same version and the Perforce path still has one
+  # to chase.
+  def native_payload_for(build)
+    build_type_id = build['buildTypeId']
+    {
+      'id' => build['id'],
+      'buildTypeId' => build_type_id,
+      'number' => build['number'],
+      'status' => build['status'],
+      'state' => build['state'],
+      'href' => "/app/rest/builds/id:#{build['id']}",
+      'webUrl' => build['webUrl'],
+      'statusText' => build['statusText'],
+      'buildType' => {
+        'id' => build_type_id,
+        'name' => build_type_id.to_s.tr('_', ' '),
+        'projectName' => 'ButterStack UAT Fixture',
+        'projectId' => 'ButterStackUatFixture',
+        'href' => "/app/rest/buildTypes/id:#{build_type_id}",
+        'webUrl' => "http://teamcity.invalid/buildConfiguration/#{build_type_id}?mode=builds"
+      },
+      'queuedDate' => build['queuedDate'],
+      'startDate' => build['startDate'],
+      'finishDate' => build['finishDate'],
+      'triggered' => {
+        'type' => 'user',
+        'date' => build['queuedDate'],
+        'user' => { 'username' => 'uat', 'id' => 1, 'href' => '/app/rest/users/id:1' }
+      },
+      'changes' => { 'href' => "/app/rest/changes?locator=build:(id:#{build['id']})" },
+      'revisions' => build['revisions'],
+      'agent' => {
+        'id' => 1, 'name' => 'teamcity-agent-1', 'typeId' => 1,
+        'href' => '/app/rest/agents/id:1',
+        'webUrl' => 'http://teamcity.invalid/agentDetails.html?id=1&agentTypeId=1&realAgentName=teamcity-agent-1'
+      },
+      'artifacts' => { 'count' => 0, 'href' => "/app/rest/builds/id:#{build['id']}/artifacts/children/" },
+      'properties' => {
+        'count' => 2,
+        'property' => [
+          { 'name' => 'teamcity.internal.webhooks.username', 'value' => 'teamcity', 'inherited' => true },
+          { 'name' => 'teamcity.internal.webhooks.password', 'value' => '******', 'inherited' => true }
+        ]
+      }
+    }
   end
 
   def respond(sock, status, body)
