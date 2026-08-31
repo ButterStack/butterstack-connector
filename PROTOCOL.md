@@ -65,7 +65,7 @@ session, cookie, or CSRF machinery in the path.
 ### Token format
 
 ```
-bsc_<integration public id>_<32 random bytes, base32>
+bsc_<project public id>_<32 random bytes, base32>
 ```
 
 - The `bsc_` prefix makes the credential greppable by secret scanners, ours and
@@ -74,6 +74,17 @@ bsc_<integration public id>_<32 random bytes, base32>
   a table scan.
 - 32 random bytes is 256 bits, which is why plain SHA-256 is the correct
   storage: a slow KDF buys nothing against an input with that much entropy.
+
+**Superseded (Ryan, 2026-08-30, #1575 group 2b):** the id segment was
+originally `<integration public id>`. A Connector is now a first-class
+per-project record rather than a per-integration one, so the id segment is
+`<project public id>` instead - a compromise or misconfiguration of one
+connector can only ever be scoped to its own project's account, never leak
+across projects. This is a cross-project-isolation change to the id segment
+only, not a wire-format redesign: the frame shapes in §3 are unaffected, and
+`connector/internal/config`'s `tokenPattern` is id-segment-agnostic
+(`\Absc_[a-z0-9][a-z0-9\-]{0,62}_[A-Za-z2-7]{32,128}\z`), so the daemon needs
+no code change to accept a project-scoped token.
 
 ### Storage on our side
 
