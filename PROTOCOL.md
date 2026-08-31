@@ -65,15 +65,18 @@ session, cookie, or CSRF machinery in the path.
 ### Token format
 
 ```
-bsc_<project public id>_<32 random bytes, base32>
+bsc_<project public id>_<32 characters, 58-symbol alphabet>
 ```
 
 - The `bsc_` prefix makes the credential greppable by secret scanners, ours and
   the studio's.
 - The id segment makes the broker's hashed lookup a primary-key read rather than
   a table scan.
-- 32 random bytes is 256 bits, which is why plain SHA-256 is the correct
-  storage: a slow KDF buys nothing against an input with that much entropy.
+- The secret segment is 32 characters drawn from a 58-symbol alphabet
+  (`[A-Za-z2-7]`, i.e. A-Z + a-z + 2-7), not standard base32 - that's
+  `32 * log2(58) ~ 187` bits of entropy, which is why plain SHA-256 is the
+  correct storage: a slow KDF buys nothing against an input with that much
+  entropy.
 
 **Superseded (Ryan, 2026-08-30, #1575 group 2b):** the id segment was
 originally `<integration public id>`. A Connector is now a first-class
