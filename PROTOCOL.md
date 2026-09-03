@@ -380,3 +380,14 @@ a p4 server host:port or a TeamCity URL -- is written to the local audit
 line's `detail` field and never leaves the studio.
 
 The log is the studio's evidence, not ours. No verb can read it.
+
+---
+
+## Appendix: mock broker and the four drill rules
+
+The mock broker (`test/mock_broker.rb`) is not the broker. The real one is a dedicated Rack endpoint at `/connect` on the Rails app with hashed-token auth, Redis-routed command and result, and explicit tenant scoping, a later PR. What the mock broker models is the surface the drills need, and it does implement faithfully the four rules the drills exist to prove:
+
+1. The upgrade is refused **before any per-connection state is allocated** when the token is absent, malformed, revoked, or wrong.
+2. A query-string token is refused, and no code path reads a token from a query string.
+3. Tokens are stored as the SHA-256 digest of the secret segment and compared in constant time; the plaintext is never held.
+4. A `result` frame is matched against the issuing session's own outstanding commands; one carrying another session's command id is discarded.
