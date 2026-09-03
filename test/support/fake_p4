@@ -1,0 +1,70 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# A stand-in for the p4 CLI, emitting the -Mj -ztag JSON-per-record output the
+# connector's Perforce executor parses.
+#
+# It also records its own argv, verbatim, to $FAKE_P4_ARGV_LOG. That log is what
+# the no-shell drill asserts on: a depot path containing shell metacharacters
+# must arrive as exactly one argv element with its bytes unchanged, which is
+# only true if the connector execve's an argv array instead of building a
+# command line.
+#
+# The connector's Perforce executor (internal/tools/perforce.go #env) builds a
+# deliberately minimal child environment -- PATH, HOME, P4PORT, P4USER,
+# P4PASSWD only -- and does not forward arbitrary variables, so a caller can't
+# rely on FAKE_P4_ARGV_LOG surviving into the child process unless something
+# else arranges it. drills.rb arranges it itself, with a tiny wrapper script
+# that bakes the path in before exec'ing this file (see drills.rb's
+# P4_WRAPPER). The UAT container (docker-compose.uat-connector.yml) has no
+# such wrapper -- connector.yml points straight at this file -- so the
+# fallback below is what makes the UAT no-shell drill (connector.spec.js
+# phase 510) work: same default path as the connector's own log_dir.
+require 'json'
+
+log = ENV['FAKE_P4_ARGV_LOG'] || '/var/log/connector/p4-argv.jsonl'
+File.open(log, 'a') { |f| f.puts(JSON.generate(ARGV)) }
+
+# Strip the fixed connection flags the connector always passes.
+args = ARGV.dup
+until args.empty?
+  case args.first
+  when '-p', '-u' then args.shift(2)
+  when '-Mj', '-ztag' then args.shift
+  else break
+  end
+end
+
+command = args.shift
+
+case command
+when 'describe'
+  args.shift if args.first == '-s'
+  change = args.shift.to_i
+  if change == 41_337
+    rec = {
+      'change' => change.to_s, 'user' => 'buildbot', 'client' => 'buildbot-ws',
+      'time' => '1756512000', 'status' => 'submitted',
+      'desc' => "Bump the UAT map\n",
+      'depotFile0' => '//depot/game/Content/Maps/Main.umap', 'action0' => 'edit',
+      'type0' => 'binary+l', 'rev0' => '7',
+      'depotFile1' => '//depot/game/Config/DefaultEngine.ini', 'action1' => 'edit',
+      'type1' => 'text', 'rev1' => '3'
+    }
+    puts JSON.generate(rec)
+  else
+    warn "#{change} - no such changelist."
+    exit 1
+  end
+when 'changes'
+  args.shift(2) if args.first == '-m'
+  # args.first is now the depot path; it is echoed back so the drill can prove
+  # the exact bytes survived the argv array.
+  puts JSON.generate({ 'change' => '41337', 'user' => 'buildbot', 'time' => '1756512000',
+                       'desc' => 'Bump the UAT map' })
+  puts JSON.generate({ 'change' => '41336', 'user' => 'artist', 'time' => '1756425600',
+                       'desc' => 'Rebake lighting' })
+else
+  warn "unsupported p4 command: #{command}"
+  exit 1
+end
