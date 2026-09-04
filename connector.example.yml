@@ -1,0 +1,76 @@
+# butterstack-connector configuration.
+#
+# This file holds live credentials. It must be mode 0600 or stricter, owned by
+# the user the connector runs as; the daemon refuses to start otherwise. Prefer
+# the *_file forms if you inject secrets from a vault.
+#
+#   install -m 0600 connector.example.yml /etc/butterstack/connector.yml
+#
+# Every credential the connector uses comes from this file, or from a *_file
+# path this file names. There is no environment-variable fallback and no flag
+# that takes a secret, so what leaves your network is bounded by what is here.
+
+# The one hostname your egress rule needs. Must be wss:// and must carry no
+# query string: the connector token is sent in the Authorization header only.
+endpoint: wss://connect.butterstack.com/connect
+
+# Optional. Pins the trust anchor for the endpoint above, for a private CA or a
+# TLS-inspecting proxy. There is no option to skip verification.
+# endpoint_ca_file: /etc/butterstack/corporate-ca.pem
+
+# Issued in the ButterStack UI, shown exactly once. We store only its SHA-256
+# digest and cannot recover it; revoking it closes the socket and leaves every
+# credential below untouched.
+token: bsc_REPLACE_ME_REPLACE_ME_REPLACE_ME_REPLACE_ME
+# token_file: /etc/butterstack/connector.token
+
+# A name for this host, shown in the Connection Status panel.
+connector_id: studio-build-01
+
+# Local audit log: one JSON line per command, including every denial.
+log_dir: /var/log/butterstack-connector
+
+# Commands executed in parallel. 1..32.
+max_concurrent: 4
+
+# The argument-constraint lists. These live here and only here: no scope value
+# is ever accepted over the socket. An in-vocabulary command whose argument
+# falls outside these is denied exactly like an unknown verb, and logged.
+scopes:
+  # Literal depot prefixes, no wildcards. A path whose literal prefix is not
+  # inside one of these is denied, so `//...` is refused even if your P4 user
+  # could read it.
+  depot_scope:
+    - //depot/game/
+  # For the reserved teamcity.build.queue verb. Not compiled in v0.
+  allowed_build_types: []
+  # For the reserved ghes.* verbs. Not compiled in v0.
+  repo_allowlist: []
+
+toggles:
+  # Content-class verbs (file contents, diffs, log tails) are off in v0 at the
+  # schema level as well; this switch cannot turn one on yet.
+  content_verbs: false
+
+perforce:
+  enabled: false
+  binary: p4
+  port: ssl:perforce.studio.lan:1666
+  # A read-only user you scope in your own protections table. That remains the
+  # primary bound; depot_scope above is the second one.
+  user: butterstack-ro
+  # ticket: ...            # prefer ticket_file
+  ticket_file: /etc/butterstack/p4.ticket
+  timeout: 20s
+
+teamcity:
+  enabled: false
+  url: https://teamcity.studio.lan
+  # A project-limited access token with a read-only role.
+  # token: ...             # prefer token_file
+  token_file: /etc/butterstack/teamcity.token
+  # For a self-signed certificate on your LAN TeamCity. This applies to the LAN
+  # server only; the connection to ButterStack is always verified.
+  # ca_file: /etc/butterstack/teamcity-ca.pem
+  # allow_insecure_tls: false
+  timeout: 10s
