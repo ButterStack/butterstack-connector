@@ -1,0 +1,88 @@
+# Cut a release by pushing a tag: `git tag v0.1.0 && git push origin v0.1.0`.
+# Produces: one archive per OS/arch on the GitHub Releases page with a
+# SHA256SUMS file, and the container image at ghcr.io/butterstack/butterstack-connector
+# tagged with the version and `latest`. Version is stamped into the binary via
+# -X main.Version (the same flag the Makefile uses).
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+  packages: write
+jobs:
+  binaries:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        include:
+          - { goos: linux,   goarch: amd64 }
+          - { goos: linux,   goarch: arm64 }
+          - { goos: darwin,  goarch: arm64 }
+          - { goos: darwin,  goarch: amd64 }
+          - { goos: windows, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.25"
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          NAME="butterstack-connector_${VERSION}_${GOOS}_${GOARCH}"
+          BIN="butterstack-connector"; [ "$GOOS" = windows ] && BIN="butterstack-connector.exe"
+          mkdir -p "dist/$NAME"
+          go build -trimpath -ldflags="-s -w -X main.Version=${VERSION}" -o "dist/$NAME/$BIN" ./cmd/butterstack-connector
+          cp README.md LICENSE connector.example.yml "dist/$NAME/"
+          cd dist
+          if [ "$GOOS" = windows ]; then zip -qr "$NAME.zip" "$NAME"; else tar -czf "$NAME.tar.gz" "$NAME"; fi
+          rm -rf "$NAME"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          retention-days: 1
+  release:
+    needs: binaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            --verify-tag
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: VERSION=${{ github.ref_name }}
+          tags: |
+            ghcr.io/butterstack/butterstack-connector:${{ github.ref_name }}
+            ghcr.io/butterstack/butterstack-connector:latest

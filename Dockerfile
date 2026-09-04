@@ -20,7 +20,8 @@ COPY . .
 # -trimpath drops build-machine file paths from the binary; -s -w strips the
 # symbol table and DWARF debug info. CGO_ENABLED=0 keeps the binary static, so
 # the runtime stage needs no libc compatibility shim.
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/butterstack-connector ./cmd/butterstack-connector
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.Version=${VERSION}" -o /out/butterstack-connector ./cmd/butterstack-connector
 
 FROM ruby:3.3-alpine
 
