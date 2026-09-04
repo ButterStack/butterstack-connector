@@ -79,10 +79,22 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # QEMU is what lets a single amd64 runner emit the arm64 half of the
+      # manifest list. Without it buildx silently produces amd64 only, which
+      # is how v0.1.0 shipped an amd64-only image while the release archives
+      # carried linux/arm64 (issue #5).
+      - uses: docker/setup-qemu-action@v3
+      # The `runtime` target, explicitly. Not the default-last-stage
+      # behaviour: naming it here means reordering the Dockerfile can never
+      # quietly publish the Ruby drill image to studios again.
       - uses: docker/build-push-action@v7
         with:
           context: .
+          target: runtime
+          platforms: linux/amd64,linux/arm64
           push: true
+          provenance: true
+          sbom: true
           build-args: VERSION=${{ github.ref_name }}
           tags: |
             ghcr.io/butterstack/butterstack-connector:${{ github.ref_name }}
