@@ -4,10 +4,10 @@ Status: **day-1 spike schema** for issue #1575 group 1. This document is the
 written-down form of checkbox group 0 (the day-1 protocol schema), which had to
 land before any verb did, because argument constraints *are* schema.
 
-Sources: Devin's design note §2.2 and §2.4
-(`ai/team/agents/devin/runbooks/2026-08-29-private-instance-reach-connector-design.md`,
-branch `plan/teamcity-private-reach`) and Shuri's must-fix list §6
-(`ai/team/agents/shuri/reports/2026-08-29-connector-design-security-review.md`).
+Sources: the ButterStack team's design note §2.2 and §2.4
+(the ButterStack connector design note (2026-08-29, internal),
+an internal planning branch) and the security review's must-fix list §6
+(the connector security review (2026-08-29, internal)).
 
 Two things this document does **not** do. It does not describe an endpoint that
 exists: the broker side is a later PR, and the only implementation of this
@@ -36,7 +36,7 @@ wss://<connect-host>/connect
 
 ### The broker endpoint (stated here so the later PR inherits it)
 
-Shuri §6 item 4, verbatim in effect: the broker is a **dedicated Rack endpoint
+security review §6 item 4, verbatim in effect: the broker is a **dedicated Rack endpoint
 at `/connect`. Not ActionCable. Not `/cable`. Not `ApplicationCable::Connection`.
 No change to `allowed_request_origins`. No `disable_request_forgery_protection`.**
 
@@ -204,7 +204,7 @@ never appear on the wire.
   `integration_id` is the one that issued the command. Reply routing is derived
   **server-side** from the authenticated session, never from a field in a frame.
 
-### Tenant scoping for `Connector.call` (Shuri §6 item 5)
+### Tenant scoping for `Connector.call` (security review §6 item 5)
 
 `config/initializers/acts_as_tenant.rb:8` sets `require_tenant = false`, so a
 missed scope returns cross-tenant rows *silently* instead of raising. Therefore:
@@ -254,12 +254,12 @@ readable. `butterstack-connector -print-vocabulary` prints it.
 A well-formed verb with an out-of-scope argument is denied **exactly like an
 unknown verb**, and both write a local audit line. Only the second kind of
 denial actually tests survival condition 2; the first only tests the dispatcher.
-Both are drilled separately for that reason (Shuri §6 item 7b).
+Both are drilled separately for that reason (security review §6 item 7b).
 
 ### No caller-supplied trigger parameters. Ever, in v0.
 
 This is the finding that made this layer day-1 work rather than v1 polish
-(Shuri F4). `allowed_jobs` constrains *which* job runs; a `params` map is
+(security review F4). `allowed_jobs` constrains *which* job runs; a `params` map is
 unconstrained, and Jenkins build parameters and TeamCity properties are
 interpolated into shell build steps by design, including in our own
 `Jenkinsfile.unreal` and `Jenkinsfile.minimobile` templates. A caller-supplied
@@ -289,7 +289,7 @@ and at process start. A build whose vocabulary grew one of them refuses to run.
 ### Perforce invocation
 
 If the connector shells out to the `p4` CLI rather than using P4Ruby, **every
-invocation is an argv array with no shell interpretation** (Shuri F5's smaller
+invocation is an argv array with no shell interpretation** (security review F5's smaller
 sibling). The ticket is passed through `P4PASSWD` in a minimal environment
 rather than on the command line, so it never appears in the studio host's
 process list. `p4 describe` is always invoked with `-s`, so diffs are excluded
@@ -318,7 +318,7 @@ v0**, and `Selfcheck()` fails the build if one ever is.
 (`teamcity.server.info`, `teamcity.build.get`, `p4.describe`). It is in the
 design note's own §2.4 list, and it is compiled in because it is the natural
 carrier for `depot_scope`: without a path-bearing argument, the out-of-scope
-drill has nothing to deny before a tool call, and that drill is the one Shuri
+drill has nothing to deny before a tool call, and that drill is the one the security review
 singled out as the only real test of condition 2.
 
 ---

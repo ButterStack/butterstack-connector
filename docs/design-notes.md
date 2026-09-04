@@ -5,8 +5,8 @@ This file preserves the design rationale and review history that was originally 
 ## Design sources
 
 Branch `plan/teamcity-private-reach` in ButterStack/butter_stack:
-`ai/team/agents/devin/runbooks/2026-08-29-private-instance-reach-connector-design.md` sections 2.2-2.6, 4.3, 5, and
-`ai/team/agents/shuri/reports/2026-08-29-connector-design-security-review.md` section 6.
+the ButterStack connector design note (2026-08-29, internal) sections 2.2-2.6, 4.3, 5, and
+the connector security review (2026-08-29, internal) section 6.
 
 ## What is in the vocabulary
 
@@ -24,7 +24,7 @@ No verb accepts a host, port, URL, or shell string. No verb accepts caller-suppl
 
 ## What the spike does not prove
 
-Carried forward from design note section 5 and Shuri section 6 item 7, plus what the standalone shape adds:
+Carried forward from design note section 5 and security review section 6 item 7, plus what the standalone shape adds:
 
 - **The argument-constraint layer end to end.** The drills prove denial at the frame boundary against a mock broker. They do not prove it against a real broker, a real TeamCity, or a real p4d.
 - **Anything on the Rails side.** There is no `/connect` endpoint, no ActionCable change, no migration, no UI. The tenant-context drill ("assert tenant context is nil at the start of a request that follows a connector frame on the same Puma thread") is Rails-side and is not covered here. Only the broker-side half of drill (f) is.
