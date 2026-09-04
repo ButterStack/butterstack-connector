@@ -1,6 +1,6 @@
 # ButterStack Connector
 
-An outbound-only daemon a game studio runs inside its own network so ButterStack can reach a private, on-premises Perforce, TeamCity, Jenkins, GitHub Enterprise Server, or Horde without the studio opening a single inbound port. One outbound TLS connection to one hostname on 443. A typed command allowlist, never a tunnel and never a shell. Credentials stay on the studio's disk and never cross the wire.
+An outbound-only daemon a game studio runs inside its own network so [ButterStack](https://butterstack.com/?utm_source=github&utm_medium=readme&utm_campaign=butterstack-connector) can reach a private, on-premises Perforce, TeamCity, Jenkins, GitHub Enterprise Server, or Horde without the studio opening a single inbound port. One outbound TLS connection to one hostname on 443. A typed command allowlist, never a tunnel and never a shell. Credentials stay on the studio's disk and never cross the wire.
 
 Status: pre-release. Tracking: [ButterStack/butter_stack#1575](https://github.com/ButterStack/butter_stack/issues/1575).
 
@@ -12,7 +12,7 @@ The connector is a daemon the studio runs on its own hardware (or in a container
 
 - Go 1.25 or later (for building from source)
 - Ruby 3.2+ (only for running the drill harness in `test/`)
-- A ButterStack account with a connector token issued from the project's Connectors UI
+- A [ButterStack account](https://butterstack.com/users/sign_up?utm_source=github&utm_medium=readme&utm_campaign=butterstack-connector) with a connector token issued from the project's Connectors UI
 
 ## Install
 
