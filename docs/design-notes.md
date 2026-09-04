@@ -4,7 +4,7 @@ This file preserves the design rationale and review history that was originally 
 
 ## Design sources
 
-Branch `plan/teamcity-private-reach` in ButterStack/butter_stack:
+Origin: an internal ButterStack planning branch (2026-08-29):
 the ButterStack connector design note (2026-08-29, internal) sections 2.2-2.6, 4.3, 5, and
 the connector security review (2026-08-29, internal) section 6.
 
