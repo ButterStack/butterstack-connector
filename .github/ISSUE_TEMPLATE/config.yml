@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security issue
+    url: https://github.com/ButterStack/butterstack-connector/blob/main/SECURITY.md
+    about: Please do not open a public issue for a security problem. Email hello@butterstack.com instead.
+  - name: ButterStack support
+    url: https://www.butterstack.com/
+    about: Questions about a ButterStack account, a project, or the Connectors tab.

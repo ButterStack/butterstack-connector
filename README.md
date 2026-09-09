@@ -10,7 +10,7 @@ The connector is a daemon the studio runs on its own hardware (or in a container
 
 ## Requirements
 
-- Go 1.25 or later (for building from source)
+- Go 1.23 or later (for building from source; release builds use 1.25)
 - Ruby 3.2+ (only for running the drill harness in `test/`)
 - A [ButterStack account](https://butterstack.com/users/sign_up?utm_source=github&utm_medium=readme&utm_campaign=butterstack-connector) with a connector token issued from the project's Connectors UI
 
