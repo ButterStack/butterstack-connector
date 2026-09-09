@@ -2,7 +2,7 @@
 
 An outbound-only daemon a game studio runs inside its own network so [ButterStack](https://butterstack.com/?utm_source=github&utm_medium=readme&utm_campaign=butterstack-connector) can reach a private, on-premises Perforce, TeamCity, Jenkins, GitHub Enterprise Server, or Horde without the studio opening a single inbound port. One outbound TLS connection to one hostname on 443. A typed command allowlist, never a tunnel and never a shell. Credentials stay on the studio's disk and never cross the wire.
 
-Status: pre-release. Tracking: [ButterStack/butter_stack#1575](https://github.com/ButterStack/butter_stack/issues/1575).
+Status: released, and running in production. The Perforce path is proven end to end against a live Helix Core server: a real changelist reached a ButterStack project through the broker, with no inbound port opened anywhere on the studio's network. [Supported backends](#supported-backends) records what each backend covers today.
 
 ## What it is
 
@@ -10,7 +10,7 @@ The connector is a daemon the studio runs on its own hardware (or in a container
 
 ## Requirements
 
-- Go 1.25 or later (for building from source)
+- Go 1.23 or later (for building from source; release builds use 1.25)
 - Ruby 3.2+ (only for running the drill harness in `test/`)
 - A [ButterStack account](https://butterstack.com/users/sign_up?utm_source=github&utm_medium=readme&utm_campaign=butterstack-connector) with a connector token issued from the project's Connectors UI
 

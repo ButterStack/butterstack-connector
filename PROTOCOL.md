@@ -1,19 +1,19 @@
 # ButterStack Connector protocol, v0
 
-Status: **day-1 spike schema** for issue #1575 group 1. This document is the
-written-down form of checkbox group 0 (the day-1 protocol schema), which had to
-land before any verb did, because argument constraints *are* schema.
+Status: **v0**, the protocol the shipped connector speaks. Argument constraints
+*are* schema, so this document is the normative reference for both halves of the
+wire: change a constraint here before you change it in code.
 
 Sources: the ButterStack team's design note §2.2 and §2.4
 (the ButterStack connector design note (2026-08-29, internal),
 an internal planning branch) and the security review's must-fix list §6
 (the connector security review (2026-08-29, internal)).
 
-Two things this document does **not** do. It does not describe an endpoint that
-exists: the broker side is a later PR, and the only implementation of this
-protocol's server half today is the drill harness in `test/mock_broker.rb`. And
-it does not restate the six survival conditions; it records the parts of them
-that are schema.
+One thing this document does **not** do: it does not restate the six survival
+conditions, only the parts of them that are schema. The server half of this
+protocol is the ButterStack broker at `wss://connect.butterstack.com/connect`;
+`test/mock_broker.rb` is a second, local implementation of the same half, used
+by the drill harness.
 
 ---
 
@@ -219,8 +219,9 @@ missed scope returns cross-tenant rows *silently* instead of raising. Therefore:
 - a `result` frame is dropped unless it matches the issuing session.
 
 The drill: assert tenant context is nil at the start of a request that follows a
-connector frame on the same Puma thread. **That drill is Rails-side and is not
-covered by this PR** (see `README.md`, "what this does not prove").
+connector frame on the same Puma thread. That drill is broker-side, so it lives
+with the broker rather than in this repo (see
+[docs/design-notes.md](docs/design-notes.md), "What is not yet proven").
 
 ---
 

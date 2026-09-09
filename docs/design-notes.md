@@ -1,6 +1,6 @@
 # Design notes
 
-This file preserves the design rationale and review history that was originally in the README when the connector lived inside the butter_stack monorepo as the issue #1575 spike.
+This file preserves the design rationale and review history that was originally in the README, from when the connector lived inside the ButterStack monorepo and before it was extracted into this repository.
 
 ## Design sources
 
@@ -22,18 +22,20 @@ the connector security review (2026-08-29, internal) section 6.
 
 No verb accepts a host, port, URL, or shell string. No verb accepts caller-supplied build parameters or properties, that is enforced structurally (`bannedArgNames` plus `Selfcheck()`, which runs at process start as well as in the tests), because a parameter map on a build-triggering verb interpolates into shell build steps and would make the allowlist a code-execution primitive inside the studio's LAN. No mutating verb and no content-class verb is compiled in.
 
-## What the spike does not prove
+## What is not yet proven
 
-Carried forward from design note section 5 and security review section 6 item 7, plus what the standalone shape adds:
+This list started as the spike's go/no-go input and is kept current as things are proven, so it is a running record of what is claimed and what is not.
 
-- **The argument-constraint layer end to end.** The drills prove denial at the frame boundary against a mock broker. They do not prove it against a real broker, a real TeamCity, or a real p4d.
-- **Anything on the Rails side.** There is no `/connect` endpoint, no ActionCable change, no migration, no UI. The tenant-context drill ("assert tenant context is nil at the start of a request that follows a connector frame on the same Puma thread") is Rails-side and is not covered here. Only the broker-side half of drill (f) is.
-- **Anything on real infrastructure.** Nothing ran against staging, demo, or production. No terraform, no security group, no hostname, no certificate. Stage A (the Tier 1 TeamCity webhook run) has not been run, and it is gated on the #1574 Phase -1 app fixes landing first; the "no token in `webhook_events.payload` or the app log" drill therefore has no result yet.
-- **The frame codec against an independent production stack.** Both ends here were written from RFC 6455, the Go client and the Ruby server independently, which is why a masking or handshake mistake shows up as a failed drill. But neither has met a real ALB, a real nginx `Upgrade` hop, or a real proxy.
-- **Latency over a home connection.** The drills run on loopback. The design's under-2-second target is untested against a NATed home network, and the `ss`/`netstat` capture showing exactly one outbound established connection and zero listeners has not been taken.
-- **Survival conditions 1, 4, and 5.** No Sigstore keyless signing, no SBOM, no build-from-source instructions, no digest-pinned base image, no version-skew handling, and no `egress.md` with a per-verb output schema enforced as a field allowlist with a conformance test. The fixed `fields=` projections in the TeamCity executor are the beginning of that, not the whole of it.
-- **Scale and multi-node routing.** Puma behaviour at tens of connectors, socket routing under a real ASG scale-out, and the per-integration connection cap and per-session command budget in the broker.
+**Proven since:** on 2026-09-08 a real Perforce changelist travelled from a studio's own Helix Core server, through a connector on the studio's box, over one outbound TLS connection to the production broker, and was recorded on a ButterStack project - which closed out, in one run, the argument-constraint layer against a real p4d, the frame codec against a real ALB, and the broker half existing at all. The published image is digest-pinnable and each release tag carries build provenance and an SBOM.
+
+Still open:
+
+- **The seven drills against the production broker.** They pass against `test/mock_broker.rb` on loopback. The production run has been exercised by real traffic rather than by the drill harness, so the denial paths in particular have no production-side result.
+- **TeamCity in production.** The verbs are compiled and drilled, but the one live deployment runs with `teamcity.enabled: false`, because handing the daemon an admin-scoped TeamCity token would give any `teamcity.*` verb an admin session's blast radius. This turns on once a connector-scoped TeamCity credential exists.
+- **Latency over a home connection.** The drills run on loopback. The design's under-2-second target is untested against a NATed home network.
+- **Survival conditions 1 and 5.** No Sigstore keyless signing, and no `egress.md` with a per-verb output schema enforced as a field allowlist with a conformance test. The fixed `fields=` projections in the TeamCity executor are the beginning of that, not the whole of it.
+- **Scale and multi-node routing.** Broker behaviour at tens of connectors, socket routing under a real scale-out, and the per-integration connection cap and per-session command budget.
 - **Everything beyond the five compiled verbs.** No Jenkins, GHES, or Horde verb; no Perforce verb beyond `describe` and `changes`; no mutating verb; no content verb; no poll-loop mode; no Windows service.
 - **An actual IT-director review.** Appendix B is a script, not a test.
 
-This is the go/no-go input for the build, and it is deliberately smaller than the product.
+The scope is deliberately smaller than the product, and that is the point: every verb that is not compiled in cannot be executed, whatever the broker asks for.

@@ -56,6 +56,11 @@ RUN chmod 0755 /usr/local/bin/butterstack-connector /usr/local/bin/uat-entrypoin
 
 USER connector:connector
 WORKDIR /home/connector
+# HOME is load-bearing: the daemon passes it straight through to `p4`, which
+# reads $HOME/.p4trust and $HOME/.p4tickets. Without it p4 gets an empty HOME,
+# never finds the trust file, and every p4.* verb fails against an SSL-enabled
+# p4d with `exit status 1`.
+ENV HOME=/home/connector
 
 # Production entrypoint: reads connector.yml from the path a studio wrote.
 # The UAT compose service overrides this with uat-entrypoint.sh, which
@@ -116,5 +121,10 @@ COPY --from=build /out/butterstack-connector /usr/local/bin/butterstack-connecto
 # could overwrite.
 USER 10001:10001
 WORKDIR /home/connector
+# HOME is load-bearing: the daemon passes it straight through to `p4`, which
+# reads $HOME/.p4trust and $HOME/.p4tickets. Without it p4 gets an empty HOME,
+# never finds the trust file, and every p4.* verb fails against an SSL-enabled
+# p4d with `exit status 1`.
+ENV HOME=/home/connector
 
 ENTRYPOINT ["/usr/local/bin/butterstack-connector", "-config", "/etc/butterstack/connector.yml"]
