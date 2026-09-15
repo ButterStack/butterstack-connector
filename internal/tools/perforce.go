@@ -156,11 +156,7 @@ func (p *Perforce) run(ctx context.Context, maxBytes int, args ...string) ([]map
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 
 	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		return nil, stdout.Len(), fmt.Errorf("perforce: %s", firstLine(msg))
+		return nil, stdout.Len(), fmt.Errorf("perforce: %s", failureDetail(stdout.Bytes(), stderr.String(), err))
 	}
 	if maxBytes > 0 && stdout.Len() > maxBytes {
 		return nil, stdout.Len(), fmt.Errorf("perforce: response exceeded max_bytes")
@@ -201,6 +197,89 @@ func str(m map[string]any, k string) string {
 		return fmt.Sprint(v)
 	}
 	return ""
+}
+
+// failureDetail extracts the most specific description available for a failed
+// p4 invocation.
+//
+// Under -Mj the p4 client writes its error records to STDOUT as JSON, not to
+// stderr. Reading stderr alone therefore left every tool failure reported as
+// the bare wait-status text - "perforce: exit status 1" - with no indication of
+// what actually went wrong. That cost four diagnoses before it was fixed: a
+// missing trust file and an expired ticket on 2026-09-08, and the two failures
+// in the 2026-09-14 Pilot Light replay, including changelist 118, whose cause
+// is still unknown for exactly this reason.
+//
+// Precedence is most-specific-first: an error record from p4 itself, then
+// stderr (which still carries connection-level failures the client never got
+// far enough to report as a record), then the process wait status, which is
+// always available and always useless on its own.
+func failureDetail(stdout []byte, stderr string, runErr error) string {
+	if msg := firstErrorRecord(stdout); msg != "" {
+		return msg
+	}
+	if msg := strings.TrimSpace(stderr); msg != "" {
+		return firstLine(msg)
+	}
+	return firstLine(runErr.Error())
+}
+
+// firstErrorRecord returns the `data` field of the first -Mj record reporting a
+// failure, or "" if there is none.
+//
+// A -Mj stream is one JSON object per record, and a failed command can emit
+// several - p4 reports each error separately, and an error stream may also
+// carry successful records before it. Records are identified by their
+// "generic" and "severity" fields; anything at severity 3 (failed) or above is
+// an error, and a record carrying `data` with no severity at all is treated as
+// one too, since p4 is not perfectly consistent about emitting severity and the
+// text is what the caller needs either way.
+//
+// Malformed or truncated JSON is not an error here: the decoder stops at the
+// first record it cannot read and whatever was found before that still stands.
+// This runs on a path that is ALREADY failing, so it must never panic or
+// introduce a second failure on top of the first.
+func firstErrorRecord(stdout []byte) string {
+	dec := json.NewDecoder(bytes.NewReader(stdout))
+	for {
+		var m map[string]any
+		if err := dec.Decode(&m); err != nil {
+			return ""
+		}
+
+		data := strings.TrimSpace(str(m, "data"))
+		if data == "" {
+			continue
+		}
+
+		if severity, ok := numField(m, "severity"); ok {
+			if severity >= p4SeverityFailed {
+				return firstLine(data)
+			}
+			continue
+		}
+
+		return firstLine(data)
+	}
+}
+
+// p4's own severity scale: 0 empty, 1 info, 2 warning, 3 failed, 4 fatal.
+const p4SeverityFailed = 3
+
+// numField reads a field p4 may render as either a JSON number or a quoted
+// string ("3" and 3 both occur across versions and record types).
+func numField(m map[string]any, k string) (float64, bool) {
+	switch v := m[k].(type) {
+	case float64:
+		return v, true
+	case string:
+		n, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		if err != nil {
+			return 0, false
+		}
+		return n, true
+	}
+	return 0, false
 }
 
 func firstLine(s string) string {
