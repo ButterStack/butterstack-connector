@@ -241,21 +241,31 @@ var Vocabulary = []Verb{
 
 	// ---- Perforce -----------------------------------------------------------
 	{
+		// Sizing (#1904). The previous 65536/1000 pair was metadata-sized and
+		// decided which changelists were allowed to be CORRECT: every describe
+		// in production silently stopped at 200 files, and a 503-file asset
+		// reorganisation - ordinary for a game studio, and exactly what this
+		// daemon exists to observe - failed outright on max_bytes. p4.describe
+		// carries NO file contents (-s), so a larger bound exposes nothing a
+		// smaller one was protecting; it only lets the record be complete.
 		Name: "p4.describe", Class: ClassPaths, Compiled: true, Tool: "perforce",
-		DefaultMaxBytes: 65536,
+		DefaultMaxBytes: 4 << 20,
 		Args: []Arg{
 			{Name: "change", Kind: KindInt, Required: true, Min: 1, Max: 1 << 40,
 				Doc: "changelist number, integer-validated before the p4 call"},
-			{Name: "max_files", Kind: KindInt, Min: 1, Max: 1000,
-				Doc: "cap on the returned file list"},
+			{Name: "max_files", Kind: KindInt, Min: 1, Max: 100000,
+				Doc: "cap on the returned file list; the response truncates and sets truncated:true rather than failing"},
 			{Name: "include_diff", Kind: KindBool, MustBeFalse: true,
 				Doc: "content class; not available in v0 at any config setting"},
 		},
 		Doc: "p4 describe -s <change>, invoked as an argv array with no shell",
 	},
 	{
+		// p4.changes returns one summary per change (no file lists), so its
+		// bound is reached far later than p4.describe's. Raised on the same
+		// principle rather than left as the only metadata-sized P-class cap.
 		Name: "p4.changes", Class: ClassPaths, Compiled: true, Tool: "perforce",
-		DefaultMaxBytes: 65536,
+		DefaultMaxBytes: 1 << 20,
 		Args: []Arg{
 			{Name: "path", Kind: KindDepotPath, Required: true, Scope: ScopeDepot, MaxLen: 1024,
 				Doc: "depot path; prefix-matched against depot_scope, no wildcard above the prefix"},

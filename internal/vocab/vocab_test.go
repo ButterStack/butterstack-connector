@@ -129,7 +129,10 @@ func TestArgumentTypeValidationAtTheFrameBoundary(t *testing.T) {
 		{"teamcity.build.get", `{"build_id":0}`, ReasonArgumentRange},
 		{"teamcity.build.get", `{}`, ReasonMissingArgument},
 		{"teamcity.build.get", `[1,2]`, ReasonMalformedArgs},
-		{"p4.describe", `{"change":7,"max_files":100000}`, ReasonArgumentRange},
+		// The bound moved from 1000 to 100000 in #1904; this still asserts that
+		// a bound EXISTS and is enforced at the frame boundary, which is what
+		// the case is for.
+		{"p4.describe", `{"change":7,"max_files":100001}`, ReasonArgumentRange},
 		{"p4.changes", `{"path":"//depot/game/...","max":9999}`, ReasonArgumentRange},
 		{"p4.changes", `{"path":42}`, ReasonArgumentType},
 	}

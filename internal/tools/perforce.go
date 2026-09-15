@@ -53,6 +53,12 @@ type Describe struct {
 	Status      string          `json:"status"`
 	Files       []DescribedFile `json:"files"`
 	FileCount   int             `json:"file_count"`
+
+	// The changelist's real file count, before max_files or max_bytes were
+	// applied. FileCount is what was RETURNED; this is what EXISTS. A consumer
+	// comparing the two can see exactly how much a truncated record is missing
+	// instead of only knowing that it is short (#1904).
+	DepotFileCount int `json:"depot_file_count"`
 }
 
 // ChangeSummary is one entry of p4.changes.
@@ -82,14 +88,28 @@ func (p *Perforce) Execute(ctx context.Context, verb string, args map[string]any
 func (p *Perforce) describe(ctx context.Context, change int64, maxFiles, maxBytes int) (any, int, bool, error) {
 	// -s omits the diffs entirely; this is the content boundary enforced at the
 	// tool invocation, not only in the schema.
-	recs, n, err := p.run(ctx, maxBytes, "describe", "-s", strconv.FormatInt(change, 10))
+	recs, n, err := p.run(ctx, "describe", "-s", strconv.FormatInt(change, 10))
 	if err != nil {
 		return nil, n, false, err
 	}
 	if len(recs) == 0 {
 		return nil, n, false, fmt.Errorf("perforce: changelist %d not found", change)
 	}
-	r := recs[0]
+	out, truncated := describeFromRecord(recs[0], change, maxFiles, maxBytes)
+	return out, n, truncated, nil
+}
+
+// describeFromRecord shapes one p4 -Mj describe record into a Describe,
+// applying both size bounds. Split out from describe() so the bounds - which
+// are the whole subject of #1904 - can be exercised without a live p4 server.
+//
+// TWO bounds apply, and both TRUNCATE rather than fail (PROTOCOL.md,
+// "Ordering, replay, and size": "the connector truncates and sets
+// truncated: true rather than streaming unbounded"). max_bytes used to
+// short-circuit in run() with an error instead, which is why changelist 118 on
+// project 108 - 503 files, an ordinary asset reorganisation for a game studio -
+// never synced at all rather than syncing partially.
+func describeFromRecord(r map[string]any, change int64, maxFiles, maxBytes int) (Describe, bool) {
 	out := Describe{
 		Change:      change,
 		User:        str(r, "user"),
@@ -98,30 +118,70 @@ func (p *Perforce) describe(ctx context.Context, change int64, maxFiles, maxByte
 		Description: str(r, "desc"),
 		Status:      str(r, "status"),
 	}
+
 	// p4 -Mj returns indexed keys: depotFile0, action0, type0, rev0, ...
+	//
+	// depotFileCount is the changelist's REAL file count, counted before either
+	// bound is applied. Without it a truncated record cannot be told from a
+	// complete one by size alone, and the consumer has no way to know how much
+	// it is missing - FileCount below is only what was returned.
 	truncated := false
+	budget := maxBytes
+	if budget <= 0 {
+		budget = DefaultDescribeMaxBytes
+	}
+
+	depotFileCount := 0
 	for i := 0; ; i++ {
 		df := str(r, "depotFile"+strconv.Itoa(i))
 		if df == "" {
 			break
 		}
+		depotFileCount++
+
+		if truncated {
+			continue // keep counting; stop collecting
+		}
 		if len(out.Files) >= maxFiles {
 			truncated = true
-			break
+			continue
 		}
-		out.Files = append(out.Files, DescribedFile{
+
+		file := DescribedFile{
 			DepotFile: df,
 			Action:    str(r, "action"+strconv.Itoa(i)),
 			Type:      str(r, "type"+strconv.Itoa(i)),
 			Rev:       str(r, "rev"+strconv.Itoa(i)),
-		})
+		}
+		// Charged against the budget before appending, so the bound holds
+		// rather than being discovered one record after it was crossed.
+		cost := file.approxJSONBytes()
+		if cost > budget {
+			truncated = true
+			continue
+		}
+		budget -= cost
+
+		out.Files = append(out.Files, file)
 	}
 	out.FileCount = len(out.Files)
-	return out, n, truncated, nil
+	out.DepotFileCount = depotFileCount
+	return out, truncated
+}
+
+// approxJSONBytes estimates what this record costs in the encoded response.
+// An estimate is the right tool: the exact cost depends on the encoder's
+// escaping, and re-marshalling every record to find out would make the bound
+// more expensive than the work it bounds. It counts the field values plus a
+// fixed allowance for the keys, braces, quotes and commas, and it rounds UP,
+// so the real response is never larger than the budget implies.
+func (f DescribedFile) approxJSONBytes() int {
+	const envelope = 64 // {"depot_file":"","action":"","type":"","rev":""},
+	return envelope + len(f.DepotFile) + len(f.Action) + len(f.Type) + len(f.Rev)
 }
 
 func (p *Perforce) changes(ctx context.Context, path string, max, maxBytes int) (any, int, bool, error) {
-	recs, n, err := p.run(ctx, maxBytes, "changes", "-m", strconv.Itoa(max), path)
+	recs, n, err := p.run(ctx, "changes", "-m", strconv.Itoa(max), path)
 	if err != nil {
 		return nil, n, false, err
 	}
@@ -138,9 +198,60 @@ func (p *Perforce) changes(ctx context.Context, path string, max, maxBytes int) 
 	return out, n, false, nil
 }
 
+// Size bounds.
+//
+// These used to be metadata-sized (64 KiB, roughly 500 file records) and they
+// decided which changelists were allowed to be CORRECT rather than protecting
+// anything: ButterStack already stores the full file list for every changelist
+// under the limit, so the cap never stopped the data existing in the product.
+// An asset reorganisation of a few hundred files is ordinary for a game studio
+// and is exactly what this daemon exists to observe.
+//
+// So the defaults are now sized for the work, and the true ceiling is a
+// separate, much larger memory bound.
+const (
+	// DefaultDescribeMaxBytes is the response budget for p4.describe when the
+	// caller names none. ~4 MiB is roughly 30,000 file records: past any real
+	// changelist, well short of a memory problem.
+	DefaultDescribeMaxBytes = 4 << 20
+
+	// MaxToolOutputBytes is how much raw p4 output the daemon will hold for a
+	// single command, so a pathological changelist cannot exhaust it. This is
+	// the sanity bound; it is not a response-shaping knob and no caller can
+	// raise it.
+	MaxToolOutputBytes = 64 << 20
+)
+
+// cappedBuffer is a bytes.Buffer that stops growing past limit and records
+// that it did. Writing into a plain buffer and checking its length afterwards
+// would already have allocated whatever p4 produced, which is the allocation
+// the ceiling exists to prevent.
+type cappedBuffer struct {
+	buf        bytes.Buffer
+	limit      int
+	overflowed bool
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	if c.overflowed {
+		return len(p), nil // absorb the rest; the command is already doomed
+	}
+	if remaining := c.limit - c.buf.Len(); len(p) > remaining {
+		c.overflowed = true
+		if remaining > 0 {
+			c.buf.Write(p[:remaining])
+		}
+		return len(p), nil
+	}
+	return c.buf.Write(p)
+}
+
+func (c *cappedBuffer) Bytes() []byte { return c.buf.Bytes() }
+func (c *cappedBuffer) Len() int      { return c.buf.Len() }
+
 // run invokes p4 with -Mj (one JSON object per record) and returns the parsed
 // records. args is appended to a fixed prefix; nothing in args is interpreted.
-func (p *Perforce) run(ctx context.Context, maxBytes int, args ...string) ([]map[string]any, int, error) {
+func (p *Perforce) run(ctx context.Context, args ...string) ([]map[string]any, int, error) {
 	argv := append([]string{
 		"-p", p.cfg.Port,
 		"-u", p.cfg.User,
@@ -152,18 +263,34 @@ func (p *Perforce) run(ctx context.Context, maxBytes int, args ...string) ([]map
 
 	cmd := exec.CommandContext(ctx, p.cfg.Binary, argv...) // argv array; no shell
 	cmd.Env = p.env()
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	// The per-verb max_bytes budget is NOT enforced here. It is a response-
+	// shaping bound and belongs where records are assembled, so a large
+	// changelist truncates with truncated: true rather than failing outright.
+	// What is enforced here is a memory ceiling: a bound on what the daemon is
+	// willing to hold, not on what the caller asked for. It is measured in
+	// megabytes and a changelist that trips it is genuinely pathological.
+	stdout := &cappedBuffer{limit: MaxToolOutputBytes}
+	var stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = stdout, &stderr
 
 	if err := cmd.Run(); err != nil {
 		return nil, stdout.Len(), fmt.Errorf("perforce: %s", failureDetail(stdout.Bytes(), stderr.String(), err))
 	}
-	if maxBytes > 0 && stdout.Len() > maxBytes {
-		return nil, stdout.Len(), fmt.Errorf("perforce: response exceeded max_bytes")
+	if stdout.overflowed {
+		return nil, stdout.Len(), fmt.Errorf("perforce: output exceeded the %d-byte tool ceiling", MaxToolOutputBytes)
 	}
 
+	// Decode from a reader over the bytes rather than from the buffer itself.
+	// Decoding CONSUMES a bytes.Buffer, so the previous `json.NewDecoder(&stdout)`
+	// left it empty and the `stdout.Len()` reported below was therefore always
+	// 0 - every successful command reported `bytes: 0` to the broker and into
+	// the audit log. Found while removing the max_bytes hard-fail above, which
+	// was the only caller that read the length before the decode drained it.
+	raw := stdout.Bytes()
+	n := len(raw)
+
 	var recs []map[string]any
-	dec := json.NewDecoder(&stdout)
+	dec := json.NewDecoder(bytes.NewReader(raw))
 	for {
 		var m map[string]any
 		if err := dec.Decode(&m); err != nil {
@@ -171,7 +298,7 @@ func (p *Perforce) run(ctx context.Context, maxBytes int, args ...string) ([]map
 		}
 		recs = append(recs, m)
 	}
-	return recs, stdout.Len(), nil
+	return recs, n, nil
 }
 
 // env builds a minimal environment. The ticket goes in P4PASSWD rather than on
